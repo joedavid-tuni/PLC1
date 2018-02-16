@@ -23,6 +23,10 @@ With respect to BAx and Lx signals the logic can look as follows: A pallet arriv
 
 A memory structure that monitors if the pallet was tended at all the workstations would also have to be implemented.
 
+## Programming Environment
+* Language: Structured Text (IEC-61131-C)
+* IDE: TwinCat (Beckhoff)
+
 ----------------------------------------------------------------------------------------------------------------------------------------
 
 
