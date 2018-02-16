@@ -85,17 +85,11 @@ For this methodology, instead of state we have functions and transitions. As we 
 After RUN function we have a lot of internal functions that are going to be inside of the structure of
 each pallet.
  
-The memory structure is the same as for the state chart methodology. The difference is that instead
-of saving the information about internal states, we save information about internal functions and
-transitions. Some of this functions and transitions are made in just one state of the state chart
-methodology. That’s why there are more functions than states. Reading the flowchart, it becomes
-easy to see what each transition and function does.
+The memory structure is the same as for the state chart methodology. The difference is that instead of saving the information about internal states, we save information about internal functions and transitions. Some of this functions and transitions are made in just one state of the state chart methodology. That’s why there are more functions than states. Reading the flowchart, it becomes easy to see what each transition and function does.
 
 ### Pallet Tracking
 
 It is imperative to know the location of each of the pallets for the logic to work. Now I will go in detail the logic how the pallet is tracked in this example.
-
-​
 
 When a presence sensor is pressed, in order to know what pallet should go to the position in front of that workstation, first we check what are the pallets that are in the position before that. After this step, we have to know what is the pallet that comes in the first place. This is a difficult thing to know. We choose to save this information inside the structure of each pallet. In other words, we have created 2 more parameters inside the structure of the pallet, that are the same as ‘pointers’. So, each pallet knows what is the pallet that is behind and in front of it. These parameters will change when a pallet is introduced into the systems, when a pallet passes in front of a pallet that is being processed by a workstation and when a pallet is removed from the system. We can see these two parameters in the visualization. There is also 1 more parameter that we have created to know what is the number of the pallet.
 When a pallet is introduced to the system, the structure in the array that has the index of number of pallets introduced, is going to be activated. When there is more than 1 pallet in the system, and a pallet (not the last one that was introduced) is removed, there will be a free space in the array. Because we introduced pallet in the number of pallets introduced, we will continue to have a free space in the
