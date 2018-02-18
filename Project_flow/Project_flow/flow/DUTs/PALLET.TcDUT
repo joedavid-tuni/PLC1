@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4020.6">
+  <DUT Name="PALLET" Id="{b8faf246-7608-4f9f-a858-2c012055802a}">
+    <Declaration><![CDATA[TYPE PALLET :
+STRUCT
+POSITION : INT:=-1;
+EX : BOOL;
+NEXT_PALLET : INT;
+PREVIOUS_PALLET : INT;
+TP : ARRAY [1..19] OF BOOL;
+FP : ARRAY [1..19] OF BOOL;	
+FOUR : BOOL;
+FIVE : BOOL;
+NUMBER : INT;
+NEW : BOOL;
+WS2 : BOOL;
+WS3 : BOOL;
+
+
+
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

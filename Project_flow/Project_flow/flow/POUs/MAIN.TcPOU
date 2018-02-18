@@ -1,0 +1,885 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4020.6">
+  <POU Name="MAIN" Id="{86e2523d-54ec-4b9e-b65f-8d305c60fba7}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+	
+PALLETS : ARRAY [1..50] OF PALLET;				// array that will contain the pallet's information. The number of pallets is limitted by 50 but the code work for as many pallets as we want.
+INDEX_PALLET : ARRAY [1..50] OF INT:=[50(50)];	// array that will contain the index of each pallet in the PALLETS array
+
+START : BOOL;		// start button
+
+// Inputs
+P1 : BOOL;			
+P2 : BOOL;
+P3 : BOOL;
+L1 : BOOL;
+L2 : BOOL;
+L3 : BOOL;
+PALLET_IN : BOOL;
+
+// Outputs
+BA1 : BOOL;
+BA2 : BOOL;
+BA3 : BOOL;
+S1 : BOOL:=TRUE;
+S2 : BOOL:=TRUE;
+S3 : BOOL:=TRUE;
+
+MOTOR : BOOL;				// Motor signal
+COUNTER_IN : INT:=0;		// number of pallets that have been introduced to the system
+COUNTER_OUT : INT:=0;		// number of pallets that have been processed by all of th workstation
+
+// Auxiliar variables
+i : INT;				
+PROCESS_COUNTER_OUT : TON;	// timer 5s
+COUNTER_WS2 : TON;			// timer 5s
+COUNTER_WS3 : TON;			// timer 5s
+COUNTER_PICK2 : TON;		// timer 2s for picking up pallets from conveyor to workstation 2 and timer for letting pallet pass through the stopper 2
+COUNTER_PICK3 : TON;		// timer 2s. The same as COUNTER_PICK2 but for workstation 3
+COUNTER_PICK1 : TON;		// timer 2s. The same as COUNTER_PICK2 but for workstation 1
+POSITION2 : BOOL;			// variable that will indicate that a pallet is in front of workstation 2
+POSITION3 : BOOL;			// variable that will indicate that a pallet is in front of workstation 3
+POSITION1 : BOOL;			// variable that will indicate that a pallet is in front of workstation 1
+INDEX : INT:=1 ;			// index of the last pallet inside the system
+Z : INT:=1;
+
+FIRST_ZONE2 : INT;			// variable that will indicate what is the first pallet in position 2 (position3 in the visualisation)
+FIRST_ZONE0 : INT;			// variable that will indicate what is the first pallet in position 0 (position1 in the visualisation)
+FIRST_ZONE4 : INT;			// variable that will indicate what is the first pallet in position 4 (position5 in the visualisation)
+
+F : ARRAY [1..7] OF BOOL;	// array that will have values of functions
+T : ARRAY [1..6] OF BOOL;	// array that will have values of transitions
+
+NUMBER_PALLETS: ARRAY [1..9] OF INT;	// number of pallets in every possible position of the system
+
+
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+// External transitions
+T[1]:= F[1] OR (F[2] AND NOT PALLET_IN);
+T[2]:= (F[2] AND PALLET_IN) OR (F[3] AND L1) OR (F[7] AND PALLET_IN);
+T[3]:= F[3] AND NOT L1;
+T[4]:= F[4];
+T[5]:= F[5] OR ( F[7] AND NOT PALLET_IN);
+T[6]:= F[6];
+
+// External funcions
+
+// Using the flowchart, the external functions are these
+// f1
+IF (F[1] OR START) AND NOT T[1] THEN
+	F[1]:=TRUE;
+	MOTOR:=TRUE;
+ELSE
+	F[1]:=FALSE;
+END_IF
+
+// f2
+IF (F[2] OR T[1]) AND NOT T[2] THEN
+	F[2]:=TRUE;
+ELSE
+	F[2]:=FALSE;	
+END_IF
+
+// f3
+IF (F[3] OR T[2]) AND NOT T[3] THEN
+	F[3]:=TRUE;
+ELSE
+	F[3]:=FALSE;
+END_IF
+
+// f4
+IF (F[4] OR T[3]) AND NOT T[4] THEN
+	F[4]:=TRUE;
+	NUMBER_PALLETS[7]:=NUMBER_PALLETS[7]+1;
+	PALLET_IN:=FALSE;
+	COUNTER_IN:=COUNTER_IN+1;
+	
+	PALLETS[(COUNTER_IN-COUNTER_OUT)].NEW:=TRUE;
+	IF (COUNTER_IN-COUNTER_OUT)>1 THEN
+		PALLETS[INDEX].NEXT_PALLET := (COUNTER_IN-COUNTER_OUT);
+		PALLETS[(COUNTER_IN-COUNTER_OUT)].NEXT_PALLET :=0;
+		PALLETS[(COUNTER_IN-COUNTER_OUT)].PREVIOUS_PALLET :=INDEX;			
+	END_IF		
+ELSE
+	F[4]:=FALSE;
+END_IF
+
+// f5
+IF (F[5] OR T[4] OR L1) AND NOT T[5] THEN
+	L1:=TRUE;
+	PROCESS_COUNTER_OUT(IN:=TRUE, PT :=T#5S);	
+	IF PROCESS_COUNTER_OUT.Q THEN
+		PROCESS_COUNTER_OUT(IN:=FALSE, PT :=T#5S);
+		L1:=FALSE;
+		F[5]:=TRUE;
+		INDEX_PALLET[COUNTER_IN]:=COUNTER_IN-COUNTER_OUT;	
+		PALLETS[COUNTER_IN-COUNTER_OUT].NUMBER:=COUNTER_IN;
+		NUMBER_PALLETS[7]:=NUMBER_PALLETS[7]-1;
+		NUMBER_PALLETS[1]:=NUMBER_PALLETS[1]+1;
+		PALLETS[(COUNTER_IN-COUNTER_OUT)].EX :=TRUE;
+		PALLETS[(COUNTER_IN-COUNTER_OUT)].POSITION:=0;
+		IF FIRST_ZONE0=0 THEN
+			FIRST_ZONE0:=COUNTER_IN-COUNTER_OUT;
+		END_IF
+	END_IF
+ELSE
+	F[5]:=FALSE;
+END_IF
+
+// f6
+IF (F[6] OR T[5]) AND NOT T[6] THEN
+	// These next lines exist to find the index of the PALLETS array of the first pallet in the system
+	IF PALLETS[1].PREVIOUS_PALLET>0 THEN
+		i:=1;
+		WHILE PALLETS[i].PREVIOUS_PALLET>0 DO
+			i:=PALLETS[i].PREVIOUS_PALLET;
+		END_WHILE
+	ELSE
+		i:=1;
+	END_IF	
+	
+	// While cycle that will change the index of the PALLETS array, depending on the order of the pallets inside the system.In this part, we want to see where are each pallet in the system and, depeding on the inputs, change the functions and transitions that are activated
+	WHILE i>0 DO
+		INDEX:=i;		
+		
+		// Internal Transitions
+		PALLETS[i].TP[1]:=PALLETS[i].NEW OR (PALLETS[i].TP[14] AND POSITION1) OR (PALLETS[i].TP[4] AND POSITION2) OR (PALLETS[i].TP[9] AND POSITION3) OR (PALLETS[i].FP[4] AND NOT (PALLETS[i].POSITION=0)) OR (PALLETS[i].FP[5] AND L2) OR (PALLETS[i].FP[6] AND PALLETS[i].WS2) OR PALLETS[i].FP[8] OR (PALLETS[i].FP[9] AND NOT (PALLETS[i].POSITION=2)) OR (PALLETS[i].FP[10] AND L3) OR (PALLETS[i].FP[11] AND PALLETS[i].WS3) OR PALLETS[i].FP[13] OR (PALLETS[i].FP[14] AND NOT (PALLETS[i].POSITION=4)) OR (PALLETS[i].FP[15] AND L1) OR (PALLETS[i].FP[16] AND NOT PALLETS[i].WS2) OR (PALLETS[i].FP[17] AND NOT PALLETS[i].WS3) OR PALLETS[i].FP[19] OR (PALLETS[i].FP[3] AND (NOT P1 OR POSITION1 OR NOT (PALLETS[i].POSITION=4) OR NOT (FIRST_ZONE4=i)));
+		PALLETS[i].TP[2]:=PALLETS[i].FP[1] AND (NOT P2 OR POSITION2 OR NOT (PALLETS[i].POSITION=0) OR NOT (FIRST_ZONE0=i));
+		PALLETS[i].TP[3]:=PALLETS[i].FP[2] AND (NOT P3 OR POSITION3 OR NOT (PALLETS[i].POSITION=2) OR NOT (FIRST_ZONE2=i));
+		PALLETS[i].TP[4]:=PALLETS[i].FP[1] AND P2 AND NOT POSITION2 AND (PALLETS[i].POSITION=0) AND (FIRST_ZONE0=i);
+		PALLETS[i].TP[5]:=PALLETS[i].FP[4] AND (PALLETS[i].POSITION=0) AND NOT POSITION2;
+		PALLETS[i].TP[6]:=PALLETS[i].FP[5] AND NOT L2;
+		PALLETS[i].TP[7]:=PALLETS[i].FP[6] AND NOT PALLETS[i].WS2;
+		PALLETS[i].TP[8]:=PALLETS[i].FP[7];
+		
+		PALLETS[i].TP[9]:=PALLETS[i].FP[2] AND P3 AND NOT POSITION3 AND (PALLETS[i].POSITION=2) AND (FIRST_ZONE2=i);
+		PALLETS[i].TP[10]:=PALLETS[i].FP[9] AND (PALLETS[i].POSITION=2);
+		PALLETS[i].TP[11]:=PALLETS[i].FP[10] AND NOT L3;
+		PALLETS[i].TP[12]:=PALLETS[i].FP[11] AND NOT PALLETS[i].WS3;
+		PALLETS[i].TP[13]:=PALLETS[i].FP[12];
+		
+		PALLETS[i].TP[14]:=PALLETS[i].FP[3] AND P1 AND NOT POSITION1 AND (PALLETS[i].POSITION=4) AND (FIRST_ZONE4=i);
+		PALLETS[i].TP[15]:=PALLETS[i].FP[14] AND (PALLETS[i].POSITION=4);
+		PALLETS[i].TP[16]:=PALLETS[i].FP[15] AND NOT L1;
+		PALLETS[i].TP[17]:=PALLETS[i].FP[16] AND PALLETS[i].WS2;
+		PALLETS[i].TP[18]:=PALLETS[i].FP[17] AND PALLETS[i].WS3;
+		PALLETS[i].TP[19]:=PALLETS[i].FP[18];
+		
+		
+		// Internal Functions
+		// f1
+		IF (PALLETS[i].FP[1] OR PALLETS[i].TP[1] OR PALLETS[i].FIVE) AND NOT PALLETS[i].TP[2] AND NOT PALLETS[i].TP[4] THEN
+			IF PALLETS[i].FIVE THEN
+				PALLETS[i].FP[1]:=TRUE;
+				PALLETS[i].FIVE:=FALSE;
+			END_IF
+			IF PALLETS[i].FOUR THEN
+				PALLETS[i].FP[1]:=TRUE;
+				PALLETS[i].FOUR:=FALSE;
+			END_IF
+			IF PALLETS[i].NEW  OR PALLETS[i].FP[3] OR PALLETS[i].FP[8] OR PALLETS[i].FP[13] THEN
+				PALLETS[i].FP[1]:=TRUE;
+			END_IF
+		ELSE
+			PALLETS[i].FP[1]:=FALSE;
+		END_IF
+		
+		PALLETS[i].NEW :=FALSE;
+		
+		// f2
+		IF (PALLETS[i].FP[2] OR PALLETS[i].TP[2]) AND NOT PALLETS[i].TP[3] AND NOT PALLETS[i].TP[9] THEN
+			PALLETS[i].FP[2]:=TRUE;
+		ELSE
+			PALLETS[i].FP[2]:=FALSE;
+		END_IF
+		
+		// f3
+		IF (PALLETS[i].FP[3] OR PALLETS[i].TP[3]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[14] THEN
+			PALLETS[i].FP[3]:=TRUE;
+		ELSE
+			PALLETS[i].FP[3]:=FALSE;
+		END_IF
+		
+		// f4
+		IF (PALLETS[i].FP[4] OR PALLETS[i].TP[4]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[5] THEN
+			PALLETS[i].FP[4]:=TRUE;
+			COUNTER_PICK2(IN:=FALSE, PT :=T#2S);
+			PALLETS[i].FOUR:=TRUE;			
+		ELSE
+			PALLETS[i].FP[4]:=FALSE;
+			IF PALLETS[i].TP[5] THEN
+				PALLETS[i].FOUR:=FALSE;
+			END_IF
+		END_IF
+		
+		// f5
+		IF (PALLETS[i].FP[5] OR PALLETS[i].TP[5]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[6] THEN
+			// when P2 is pressed, the pallets jumps to position 1 and then we check if the workstation 2 is working or not.
+			POSITION2:=TRUE;
+			PALLETS[i].FP[5]:=TRUE;
+			COUNTER_PICK2(IN:=FALSE, PT :=T#2S);
+			NUMBER_PALLETS[1]:=NUMBER_PALLETS[1]-1;
+			NUMBER_PALLETS[2]:=NUMBER_PALLETS[2]+1;
+			PALLETS[i].POSITION:=1;
+			IF PALLETS[i].NEXT_PALLET>0 THEN
+				IF PALLETS[PALLETS[i].NEXT_PALLET].POSITION=0 THEN
+					FIRST_ZONE0:=PALLETS[i].NEXT_PALLET;
+				ELSE
+					FIRST_ZONE0:=0;
+				END_IF
+			ELSE
+				FIRST_ZONE0:=0;
+			END_IF
+				
+			
+		ELSE
+			IF PALLETS[i].TP[6] THEN
+				// if the workstation 2 is not working, t6 will become true and f5 false.
+				PALLETS[i].FP[5]:=FALSE;
+			ELSE
+				// if the workstation 2 is working, the stopper goes down, letting this pallet pass. This operation takes 2 seconds.
+				IF PALLETS[i].FP[5] THEN
+					S2:=FALSE;			
+					COUNTER_PICK2(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK2.Q THEN						
+						S2:=TRUE;
+						P2:=FALSE;
+						POSITION2:=FALSE;
+						PALLETS[i].FP[5]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[2]:=NUMBER_PALLETS[2]-1;
+						NUMBER_PALLETS[3]:=NUMBER_PALLETS[3]+1;
+						PALLETS[i].POSITION:=2;
+						COUNTER_PICK2(IN:=FALSE, PT :=T#2S);
+						IF FIRST_ZONE2=0 THEN
+							FIRST_ZONE2:=i;
+						END_IF
+						// When this happens, this pallet passes to the front of the pallet that is being processed by the workstation 2. This next lines of code exist to make the change on the order of the pallets in the system
+						IF L2 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+							PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+					
+						END_IF
+				
+					END_IF
+				ELSE
+					PALLETS[i].FP[5]:=FALSE;
+				END_IF
+				
+			END_IF			
+			
+		END_IF
+		
+		// f6
+		IF (PALLETS[i].FP[6] OR PALLETS[i].TP[6]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[7] THEN
+			// now is time to check if this pallet has the service from workstation 2 or not.
+			PALLETS[i].FP[6]:=TRUE;
+			COUNTER_PICK2(IN:=FALSE, PT :=T#2S);
+		ELSE
+			IF PALLETS[i].TP[7] THEN
+				// if not, the T7 goes true and f6 false
+				PALLETS[i].FP[6]:=FALSE;
+			ELSE
+				IF PALLETS[i].FP[6] THEN
+					// if yes, the stopper 2 goes down, letting the pallet pass. 
+					S2:=FALSE;			
+					COUNTER_PICK2(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK2.Q THEN						
+						S2:=TRUE;
+						P2:=FALSE;
+						POSITION2:=FALSE;
+						PALLETS[i].FP[6]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[2]:=NUMBER_PALLETS[2]-1;
+						NUMBER_PALLETS[3]:=NUMBER_PALLETS[3]+1;
+						PALLETS[i].POSITION:=2;
+						IF FIRST_ZONE2=0 THEN
+							FIRST_ZONE2:=i;
+						END_IF
+						COUNTER_PICK2(IN:=FALSE, PT :=T#2S);
+						// the same as for fucntion 5
+						IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF
+						
+					END_IF
+				ELSE
+					PALLETS[i].FP[6]:=FALSE;
+				END_IF
+				
+			END_IF
+		END_IF
+		
+		// f7
+		IF (PALLETS[i].FP[7] OR PALLETS[i].TP[7] OR (BA2 AND (PALLETS[i].POSITION=1))) AND NOT PALLETS[i].TP[8] THEN
+			// now the pallets is prepared to be picked up by the machine to get the service. This picking up process takes also 2 seconds
+			BA2:=TRUE;
+			COUNTER_PICK2(IN:=TRUE, PT :=T#2S);
+			IF COUNTER_PICK2.Q THEN	
+				// after the timer reach 2 seconds, the pallet is already inside the workstation 2.			
+				POSITION2:=FALSE;
+				PALLETS[i].FP[7]:=TRUE;
+				PALLETS[i].POSITION:=7;
+				NUMBER_PALLETS[2]:=NUMBER_PALLETS[2]-1;
+				NUMBER_PALLETS[8]:=NUMBER_PALLETS[8]+1;
+				P2:=FALSE;
+				BA2:=FALSE;
+				L2:=TRUE;
+				COUNTER_WS2(IN:=FALSE, PT :=T#5S);
+			END_IF
+		ELSE
+			PALLETS[i].FP[7]:=FALSE;
+		END_IF
+		
+		// f8
+		IF (PALLETS[i].FP[8] OR PALLETS[i].TP[8] OR (L2 AND (PALLETS[i].POSITION=7))) AND NOT PALLETS[i].TP[1] THEN
+			// in this function, the pallet is being processed by the workstation 2. This takes 5 seconds
+			L2:=TRUE;
+			COUNTER_WS2(IN:=TRUE, PT :=T#5S);
+			IF COUNTER_WS2.Q THEN
+				// after 5 seconds, the pallet goes to position 2. This does not take time
+				PALLETS[i].WS2:=TRUE;
+				PALLETS[i].FP[8]:=TRUE;
+				NUMBER_PALLETS[8]:=NUMBER_PALLETS[8]-1;
+				NUMBER_PALLETS[3]:=NUMBER_PALLETS[3]+1;
+				PALLETS[i].POSITION:=2;
+				IF FIRST_ZONE2=0 THEN
+					FIRST_ZONE2:=i;
+				END_IF
+				L2:=FALSE;
+				COUNTER_WS2(IN:=FALSE, PT :=T#5S);		
+			END_IF
+		ELSE
+			PALLETS[i].FP[8]:=FALSE;
+		END_IF
+		 
+		// f9
+		IF (PALLETS[i].FP[9] OR PALLETS[i].TP[9]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[10] THEN
+			// this function is the same as function f4 but for workstation 3. 
+			PALLETS[i].FP[9]:=TRUE;
+			COUNTER_PICK3(IN:=FALSE, PT :=T#2S);
+			PALLETS[i].FOUR:=TRUE;
+		ELSE
+			PALLETS[i].FP[9]:=FALSE;
+			IF PALLETS[i].TP[10] THEN
+				PALLETS[i].FOUR:=FALSE;
+			END_IF		
+		END_IF
+		
+		// f10
+		IF (PALLETS[i].FP[10] OR PALLETS[i].TP[10]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[11] THEN
+			// this function is the same as function 5. We check if the workstation 3 is working or not
+			POSITION3:=TRUE;
+			PALLETS[i].FP[10]:=TRUE;
+			COUNTER_PICK3(IN:=FALSE, PT :=T#2S);
+			NUMBER_PALLETS[3]:=NUMBER_PALLETS[3]-1;
+			NUMBER_PALLETS[4]:=NUMBER_PALLETS[4]+1;
+			PALLETS[i].POSITION:=3;
+			IF PALLETS[i].NEXT_PALLET>0 THEN
+				IF PALLETS[PALLETS[i].NEXT_PALLET].POSITION=2 THEN
+					FIRST_ZONE2:=PALLETS[i].NEXT_PALLET;
+				ELSE
+					FIRST_ZONE2:=0;
+				END_IF
+			ELSE
+				FIRST_ZONE2:=0;
+			END_IF
+		ELSE
+			IF PALLETS[i].TP[11] THEN
+				PALLETS[i].FP[10]:=FALSE;
+			ELSE
+				IF PALLETS[i].FP[10] THEN
+					// if yes, the pallet pass through the stopper 3. This takes 2 seconds
+					S3:=FALSE;			
+					COUNTER_PICK3(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK3.Q THEN						
+						S3:=TRUE;
+						P3:=FALSE;
+						POSITION3:=FALSE;
+						PALLETS[i].FP[10]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[4]:=NUMBER_PALLETS[4]-1;
+						NUMBER_PALLETS[5]:=NUMBER_PALLETS[5]+1;
+						PALLETS[i].POSITION:=4;
+						COUNTER_PICK3(IN:=FALSE, PT :=T#2S);
+						IF FIRST_ZONE4=0 THEN
+							FIRST_ZONE4:=i;
+						END_IF
+						IF L3 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF
+				
+					END_IF
+				ELSE
+					PALLETS[i].FP[10]:=FALSE;
+				END_IF
+				
+			END_IF				
+		END_IF
+		
+		// f11
+		IF (PALLETS[i].FP[11] OR PALLETS[i].TP[11]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[12] THEN
+			// is the same as function f6. We check if this pallet has already the service from workstation 3
+			PALLETS[i].FP[11]:=TRUE;
+			COUNTER_PICK3(IN:=FALSE, PT :=T#2S);
+		ELSE
+			IF PALLETS[i].TP[12] THEN
+				PALLETS[i].FP[11]:=FALSE;
+			ELSE
+				IF PALLETS[i].FP[11] THEN
+					// if yes, the pallet pass through the stopper 3. This takes 2 seconds
+					S3:=FALSE;			
+					COUNTER_PICK3(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK3.Q THEN						
+						S3:=TRUE;
+						P3:=FALSE;
+						POSITION3:=FALSE;
+						PALLETS[i].FP[11]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[4]:=NUMBER_PALLETS[4]-1;
+						NUMBER_PALLETS[5]:=NUMBER_PALLETS[5]+1;
+						PALLETS[i].POSITION:=4;
+						IF FIRST_ZONE4=0 THEN
+							FIRST_ZONE4:=i;
+						END_IF
+						COUNTER_PICK3(IN:=FALSE, PT :=T#2S);
+						
+						IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF
+						
+					END_IF
+				ELSE
+					PALLETS[i].FP[11]:=FALSE;
+				END_IF
+				
+			END_IF
+		END_IF
+		
+		// f12
+		IF (PALLETS[i].FP[12] OR PALLETS[i].TP[12] OR (BA3 AND (PALLETS[i].POSITION=3))) AND NOT PALLETS[i].TP[13] THEN
+			// the same as function 7. The workstation pickes up the pallet from the conveyor. This takes 2 seconds
+			BA3:=TRUE;
+			COUNTER_PICK3(IN:=TRUE, PT :=T#2S);
+			IF COUNTER_PICK3.Q THEN				
+				POSITION3:=FALSE;
+				PALLETS[i].FP[12]:=TRUE;
+				NUMBER_PALLETS[4]:=NUMBER_PALLETS[4]-1;
+				NUMBER_PALLETS[9]:=NUMBER_PALLETS[9]+1;
+				PALLETS[i].POSITION:=8;
+				P3:=FALSE;
+				BA3:=FALSE;
+				L3:=TRUE;
+				COUNTER_WS3(IN:=FALSE, PT :=T#5S);
+			END_IF
+		ELSE
+			PALLETS[i].FP[12]:=FALSE;
+		END_IF
+		
+		// f13
+		IF (PALLETS[i].FP[13] OR PALLETS[i].TP[13] OR (L3 AND (PALLETS[i].POSITION=8))) AND NOT PALLETS[i].TP[1] THEN
+			// the same as f8, the workstation process the pallet and then she put the pallet into the next position
+			L3:=TRUE;
+			COUNTER_WS3(IN:=TRUE, PT :=T#5S);
+			IF COUNTER_WS3.Q THEN
+				PALLETS[i].WS3:=TRUE;
+				PALLETS[i].FP[13]:=TRUE;
+				L3:=FALSE;
+				NUMBER_PALLETS[9]:=NUMBER_PALLETS[9]-1;
+				NUMBER_PALLETS[5]:=NUMBER_PALLETS[5]+1;
+				PALLETS[i].POSITION:=4;
+				IF FIRST_ZONE4=0 THEN
+					FIRST_ZONE4:=i;
+				END_IF
+				COUNTER_WS3(IN:=FALSE, PT :=T#5S);		
+			END_IF
+		ELSE
+			PALLETS[i].FP[13]:=FALSE;
+		END_IF
+		
+		// f14
+		IF (PALLETS[i].FP[14] OR PALLETS[i].TP[14]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[15] THEN
+			// the same as f9 and f4
+			PALLETS[i].FP[14]:=TRUE;
+			COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+			PALLETS[i].FOUR:=TRUE;
+		ELSE
+			PALLETS[i].FP[14]:=FALSE;
+			IF PALLETS[i].TP[15] THEN
+				PALLETS[i].FOUR:=FALSE;
+			END_IF	
+		END_IF
+		
+		// f15
+		IF (PALLETS[i].FP[15] OR PALLETS[i].TP[15]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[16] THEN
+			// the same as f10 and f5. We check if the workstation 1 is working or not
+			POSITION1:=TRUE;
+			PALLETS[i].FP[15]:=TRUE;
+			COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+			NUMBER_PALLETS[5]:=NUMBER_PALLETS[5]-1;
+			NUMBER_PALLETS[6]:=NUMBER_PALLETS[6]+1;
+			PALLETS[i].POSITION:=5;
+			IF PALLETS[i].NEXT_PALLET>0 THEN
+				IF PALLETS[PALLETS[i].NEXT_PALLET].POSITION=4 THEN
+					FIRST_ZONE4:=PALLETS[i].NEXT_PALLET;
+				ELSE
+					FIRST_ZONE4:=0;
+				END_IF
+			ELSE
+				FIRST_ZONE4:=0;
+			END_IF
+		ELSE
+			IF PALLETS[i].TP[16] THEN
+				PALLETS[i].FP[15]:=FALSE;
+			ELSE
+				// if yes, the pallet pass through the stopper 1
+				IF PALLETS[i].FP[15] THEN
+					S1:=FALSE;			
+					COUNTER_PICK1(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK1.Q THEN						
+						S1:=TRUE;
+						P1:=FALSE;
+						POSITION1:=FALSE;
+						PALLETS[i].FP[15]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[6]:=NUMBER_PALLETS[6]-1;
+						NUMBER_PALLETS[1]:=NUMBER_PALLETS[1]+1;
+						PALLETS[i].POSITION:=0;
+						COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+						IF FIRST_ZONE0=0 THEN
+							FIRST_ZONE0:=i;
+						END_IF
+						IF L1 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF				
+					END_IF
+				ELSE
+					PALLETS[i].FP[15]:=FALSE;
+				END_IF
+				
+			END_IF				
+		END_IF
+		
+		// f16
+		IF (PALLETS[i].FP[16] OR PALLETS[i].TP[16]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[17] THEN
+			// the same as f11 and f6. The workstation check if the pallet has the service from workstation 2
+			PALLETS[i].FP[16]:=TRUE;
+			COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+		ELSE
+			IF PALLETS[i].TP[17] THEN
+				PALLETS[i].FP[16]:=FALSE;
+			ELSE
+				IF PALLETS[i].FP[16] THEN
+					// if she does not have, the pallet continues in the system
+					S1:=FALSE;			
+					COUNTER_PICK1(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK1.Q THEN						
+						S1:=TRUE;
+						P1:=FALSE;
+						POSITION1:=FALSE;
+						PALLETS[i].FP[16]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[6]:=NUMBER_PALLETS[6]-1;
+						NUMBER_PALLETS[1]:=NUMBER_PALLETS[1]+1;
+						PALLETS[i].POSITION:=0;
+						IF FIRST_ZONE0=0 THEN
+							FIRST_ZONE0:=i;
+						END_IF
+						COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+						
+						IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF
+						
+					END_IF
+				ELSE
+					PALLETS[i].FP[16]:=FALSE;
+				END_IF
+				
+			END_IF
+		END_IF
+		
+		// f17
+		IF (PALLETS[i].FP[17] OR PALLETS[i].TP[17]) AND NOT PALLETS[i].TP[1] AND NOT PALLETS[i].TP[18] THEN
+			// the same as f16. The workstation 1 check if this pallet has the service from workstation 3.
+			PALLETS[i].FP[17]:=TRUE;
+			COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+		ELSE
+			IF PALLETS[i].TP[18] THEN
+				PALLETS[i].FP[17]:=FALSE;
+			ELSE
+				IF PALLETS[i].FP[17] THEN
+					// if she does not have, the pallet continues inside the system
+					S1:=FALSE;			
+					COUNTER_PICK1(IN:=TRUE, PT :=T#2S);
+					IF COUNTER_PICK1.Q THEN						
+						S1:=TRUE;
+						P1:=FALSE;
+						POSITION1:=FALSE;
+						PALLETS[i].FP[17]:=FALSE;
+						PALLETS[i].FIVE:=TRUE;
+						NUMBER_PALLETS[6]:=NUMBER_PALLETS[6]-1;
+						NUMBER_PALLETS[1]:=NUMBER_PALLETS[1]+1;
+						PALLETS[i].POSITION:=0;
+						IF FIRST_ZONE0=0 THEN
+							FIRST_ZONE0:=i;
+						END_IF
+						COUNTER_PICK1(IN:=FALSE, PT :=T#2S);
+						IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+							PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+							PALLETS[i].NEXT_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+				
+							PALLETS[i].PREVIOUS_PALLET:= PALLETS[PALLETS[i].PREVIOUS_PALLET].PREVIOUS_PALLET;
+							PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=i;
+					
+							IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+								PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=i;
+							END_IF
+					
+							IF PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET>0 THEN
+								PALLETS[PALLETS[PALLETS[i].NEXT_PALLET].NEXT_PALLET].PREVIOUS_PALLET:=PALLETS[i].NEXT_PALLET;
+							END_IF
+						END_IF
+						
+						
+					END_IF
+				ELSE
+					PALLETS[i].FP[17]:=FALSE;
+				END_IF
+				
+			END_IF
+		END_IF
+		
+		// f18
+		IF (PALLETS[i].FP[18] OR PALLETS[i].TP[18] OR (BA1 AND (PALLETS[i].POSITION=5))) AND NOT PALLETS[i].TP[19] THEN
+			// the same as f12 and f7. The workstation pickes the pallet. This takes 2 seconds
+			BA1:=TRUE;
+			COUNTER_PICK1(IN:=TRUE, PT :=T#2S);
+			IF COUNTER_PICK1.Q THEN				
+				POSITION1:=FALSE;
+				PALLETS[i].FP[18]:=TRUE;
+				NUMBER_PALLETS[6]:=NUMBER_PALLETS[6]-1;
+				PALLETS[i].POSITION:=9;
+				P1:=FALSE;
+				BA1:=FALSE;
+			END_IF
+		ELSE
+			PALLETS[i].FP[18]:=FALSE;
+		END_IF
+		
+		// f19
+		IF (PALLETS[i].FP[19] OR PALLETS[i].TP[19]) AND NOT PALLETS[i].TP[1] THEN
+			// if the pallet reach this function, it means that she is ready to leave the system. This function does that.
+			// To do that, the function has to check the position of the pallet inside the PALLETS array. After that, she has to chenge the position in the array of this pallet and the last pallet in the array.We choose to do this in order to not have "holes" between the first and last position used.
+			// in other words, if he just eliminate the pallet, we will have a free space between the first and last position used. And if we wanted to insert another pallet we had to insert after the last position, leaving a free space in the array.
+			// by changing the positions of the pallet that will leave and the last pallet in the array, we preserve space inside this array!  
+			INDEX_PALLET[PALLETS[i].NUMBER]:=50;
+			IF i<(COUNTER_IN-COUNTER_OUT) THEN
+				INDEX_PALLET[PALLETS[COUNTER_IN-COUNTER_OUT].NUMBER]:=i;
+			END_IF
+			IF (COUNTER_IN-COUNTER_OUT) =1 THEN
+				PALLETS[i].PREVIOUS_PALLET:=0;
+				PALLETS[i].NEXT_PALLET:=0;
+				PALLETS[i].WS2:=FALSE;
+				PALLETS[i].WS3:=FALSE;
+				PALLETS[i].EX:=FALSE;
+				PALLETS[i].FIVE:=FALSE;
+				PALLETS[i].NEW:=FALSE;
+				PALLETS[i].POSITION:=-1;
+				PALLETS[i].NUMBER:=0;
+				FOR Z:=1 TO 19 DO
+					PALLETS[i].FP[Z]:=0;
+					PALLETS[i].TP[Z]:=0;
+				END_FOR
+			ELSE
+				IF i=1 THEN
+					IF PALLETS[i].NEXT_PALLET>0 THEN
+						PALLETS[PALLETS[i].NEXT_PALLET].PREVIOUS_PALLET:=0;
+					END_IF										
+					IF COUNTER_IN-COUNTER_OUT>2 THEN	
+						PALLETS[i].PREVIOUS_PALLET:=COUNTER_IN-COUNTER_OUT-1;					
+						PALLETS[COUNTER_IN-COUNTER_OUT-1].NEXT_PALLET:=1;
+					ELSE
+						PALLETS[i].PREVIOUS_PALLET:=0;
+					END_IF
+					PALLETS[i].NEXT_PALLET:=0;
+					
+					PALLETS[i].WS2:=PALLETS[(COUNTER_IN-COUNTER_OUT)].WS2;
+					PALLETS[i].WS3:=PALLETS[(COUNTER_IN-COUNTER_OUT)].WS3;
+					PALLETS[i].EX:=PALLETS[(COUNTER_IN-COUNTER_OUT)].EX;
+					PALLETS[i].FIVE:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FIVE;
+					PALLETS[i].FOUR:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FOUR;
+					PALLETS[i].NEW:=PALLETS[(COUNTER_IN-COUNTER_OUT)].NEW;
+					PALLETS[i].POSITION:=PALLETS[(COUNTER_IN-COUNTER_OUT)].POSITION;
+					PALLETS[i].NUMBER:=PALLETS[(COUNTER_IN-COUNTER_OUT)].NUMBER;
+					FOR Z:=1 TO 19 DO
+						PALLETS[i].FP[Z]:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FP[Z];
+						PALLETS[i].TP[Z]:=PALLETS[(COUNTER_IN-COUNTER_OUT)].TP[Z];
+					END_FOR
+					
+				END_IF
+				IF i<(COUNTER_IN-COUNTER_OUT) AND i>1 THEN
+					IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+						PALLETS[(PALLETS[i].PREVIOUS_PALLET)].NEXT_PALLET:=PALLETS[i].NEXT_PALLET;
+					
+						IF PALLETS[i].NEXT_PALLET>0 THEN
+							PALLETS[(PALLETS[i].NEXT_PALLET)].PREVIOUS_PALLET:=PALLETS[i].PREVIOUS_PALLET;
+						END_IF
+						PALLETS[PALLETS[COUNTER_IN-COUNTER_OUT].PREVIOUS_PALLET].NEXT_PALLET:=i;
+						PALLETS[i].PREVIOUS_PALLET:=PALLETS[COUNTER_IN-COUNTER_OUT].PREVIOUS_PALLET;
+						PALLETS[i].NEXT_PALLET:=PALLETS[COUNTER_IN-COUNTER_OUT].NEXT_PALLET;
+					ELSE
+						PALLETS[(PALLETS[i].NEXT_PALLET)].PREVIOUS_PALLET:=0;
+						PALLETS[i].PREVIOUS_PALLET:=PALLETS[COUNTER_IN-COUNTER_OUT].PREVIOUS_PALLET;
+						PALLETS[i].NEXT_PALLET:=PALLETS[COUNTER_IN-COUNTER_OUT].NEXT_PALLET;
+						PALLETS[PALLETS[COUNTER_IN-COUNTER_OUT].PREVIOUS_PALLET].NEXT_PALLET:=i;
+					END_IF					
+					
+					
+					PALLETS[i].WS2:=PALLETS[(COUNTER_IN-COUNTER_OUT)].WS2;
+					PALLETS[i].WS3:=PALLETS[(COUNTER_IN-COUNTER_OUT)].WS3;
+					PALLETS[i].EX:=PALLETS[(COUNTER_IN-COUNTER_OUT)].EX;
+					PALLETS[i].FIVE:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FIVE;
+					PALLETS[i].FOUR:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FOUR;
+					PALLETS[i].NEW:=PALLETS[(COUNTER_IN-COUNTER_OUT)].NEW;
+					PALLETS[i].POSITION:=PALLETS[(COUNTER_IN-COUNTER_OUT)].POSITION;
+					PALLETS[i].NUMBER:=PALLETS[(COUNTER_IN-COUNTER_OUT)].NUMBER;
+					FOR Z:=1 TO 19 DO
+						PALLETS[i].FP[Z]:=PALLETS[(COUNTER_IN-COUNTER_OUT)].FP[Z];
+						PALLETS[i].TP[Z]:=PALLETS[(COUNTER_IN-COUNTER_OUT)].TP[Z];
+					END_FOR
+							
+				END_IF
+				IF i=COUNTER_IN-COUNTER_OUT THEN
+					PALLETS[COUNTER_IN-COUNTER_OUT-1].NEXT_PALLET:=0;
+					IF PALLETS[i].PREVIOUS_PALLET>0 THEN
+						PALLETS[PALLETS[i].PREVIOUS_PALLET].NEXT_PALLET:=COUNTER_IN-COUNTER_OUT-1;
+					END_IF					
+					PALLETS[COUNTER_IN-COUNTER_OUT-1].PREVIOUS_PALLET:= PALLETS[i].PREVIOUS_PALLET;
+				END_IF
+				
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].WS2:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].WS3:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].EX:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].NEXT_PALLET:=0;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].PREVIOUS_PALLET:=0;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].FIVE:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].FOUR:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].NEW:=FALSE;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].POSITION:=-1;
+				PALLETS[(COUNTER_IN-COUNTER_OUT)].NUMBER:=0;
+				FOR Z:=1 TO 19 DO
+					PALLETS[(COUNTER_IN-COUNTER_OUT)].FP[Z]:=FALSE;
+					PALLETS[(COUNTER_IN-COUNTER_OUT)].TP[Z]:=FALSE;
+				END_FOR				
+			END_IF
+
+			IF FIRST_ZONE4=COUNTER_IN-COUNTER_OUT THEN
+				FIRST_ZONE4:=i;				
+			END_IF
+			IF FIRST_ZONE2=COUNTER_IN-COUNTER_OUT THEN
+				FIRST_ZONE2:=i;				
+			END_IF
+			IF FIRST_ZONE0=COUNTER_IN-COUNTER_OUT THEN
+				FIRST_ZONE0:=i;				
+			END_IF	
+
+			
+			
+			COUNTER_OUT:=COUNTER_OUT+1;
+		ELSE
+			PALLETS[i].FP[19]:=FALSE;
+		END_IF
+		
+		i:=PALLETS[i].NEXT_PALLET;
+		
+	END_WHILE	
+	F[6]:=TRUE;
+ELSE
+	F[6]:=FALSE;
+	
+END_IF
+
+//f7
+IF (F[7] OR T[6]) AND NOT T[5] AND NOT T[2] THEN
+	F[7]:=TRUE;
+ELSE
+	F[7]:=FALSE;
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
